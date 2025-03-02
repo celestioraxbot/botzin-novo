@@ -20,6 +20,7 @@
     "playwright": "^1.50.1",
     "puppeteer": "^24.3.0",
     "puppeteer-core": "^24.3.0",
+    "qrcode": "^1.5.4",
     "qrcode-terminal": "^0.12.0",
     "sqlite3": "^5.1.7",
     "whatsapp-web.js": "^1.26.0",
