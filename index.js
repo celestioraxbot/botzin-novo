@@ -2,7 +2,7 @@ require('dotenv').config();
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const express = require('express');
 const bodyParser = require('body-parser');
-const qrcode = require('qrcode-terminal');
+const qrcode = require('qrcode'); // Substituído qrcode-terminal para exibir QR via HTTP
 const sqlite3 = require('sqlite3').verbose();
 const axios = require('axios');
 const fs = require('fs');
@@ -233,19 +233,23 @@ const client = new Client({
     puppeteer: {
         headless: true,
         args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
+            '--no-sandbox',              // Necessário para Render.com
+            '--disable-setuid-sandbox',  // Segurança no ambiente conteinerizado
             '--disable-infobars',
-            '--disable-dev-shm-usage',
-            '--disable-gpu'
+            '--disable-dev-shm-usage',   // Evita problemas de memória no Docker
+            '--disable-gpu'              // Desativa GPU, não necessária no Render
         ],
-        timeout: 60000,
+        timeout: 60000,                  // Timeout ajustado para inicialização
     },
 });
 
+// Variável para armazenar o QR Code
+let qrCodeData = '';
+
 client.on('qr', (qr) => {
-    logger.info('Por favor, escaneie o QR Code abaixo para autenticar o bot:');
-    qrcode.generate(qr, { small: true });
+    qrCodeData = qr;
+    logger.info('QR gerado! Acesse https://<seu-app>.onrender.com/qr para escanear.');
+    // O QR será exibido na rota /qr ao invés de apenas nos logs
 });
 
 client.on('ready', () => {
@@ -265,6 +269,20 @@ client.on('disconnected', (reason) => {
         logger.info('Tentando reconectar...');
         client.initialize();
     }, 5000);
+});
+
+// Rota para exibir o QR Code
+app.get('/qr', async (req, res) => {
+    if (!qrCodeData) {
+        return res.send('QR não gerado ainda. Aguarde ou reinicie o bot.');
+    }
+    try {
+        const qrImage = await qrcode.toDataURL(qrCodeData);
+        res.send(`<img src="${qrImage}" alt="Escaneie este QR Code com o WhatsApp" />`);
+    } catch (error) {
+        logger.error('Erro ao gerar imagem QR:', error.message);
+        res.send('Erro ao gerar o QR Code. Tente novamente.');
+    }
 });
 
 // Função de retry
