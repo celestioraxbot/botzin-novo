@@ -2,7 +2,7 @@ require('dotenv').config();
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const express = require('express');
 const bodyParser = require('body-parser');
-const qrcode = require('qrcode'); // Substituído qrcode-terminal para exibir QR via HTTP
+const qrcode = require('qrcode');
 const sqlite3 = require('sqlite3').verbose();
 const axios = require('axios');
 const fs = require('fs');
@@ -227,19 +227,23 @@ const db = new sqlite3.Database('./groupMessages.db', sqlite3.OPEN_READWRITE | s
 const deepgram = process.env.DEEPGRAM_API_KEY ? createClient(process.env.DEEPGRAM_API_KEY) : null;
 const visionClient = process.env.GOOGLE_VISION_API_KEY ? new vision.ImageAnnotatorClient({ key: process.env.GOOGLE_VISION_API_KEY }) : null;
 
-// Configuração do cliente WhatsApp
+// Configuração do cliente WhatsApp ajustada para o Render
 const client = new Client({
-    authStrategy: new LocalAuth(),
+    authStrategy: new LocalAuth({ dataPath: './whatsapp-auth' }), // Persistência local, mas cuidado com o Render
     puppeteer: {
         headless: true,
+        executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', // Ajuste conforme o ambiente
         args: [
-            '--no-sandbox',              // Necessário para Render.com
-            '--disable-setuid-sandbox',  // Segurança no ambiente conteinerizado
-            '--disable-infobars',
-            '--disable-dev-shm-usage',   // Evita problemas de memória no Docker
-            '--disable-gpu'              // Desativa GPU, não necessária no Render
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
+            '--single-process', // Reduz uso de recursos
+            '--disable-gpu'
         ],
-        timeout: 60000,                  // Timeout ajustado para inicialização
+        timeout: 120000, // Aumentado para 2 minutos
     },
 });
 
@@ -248,8 +252,7 @@ let qrCodeData = '';
 
 client.on('qr', (qr) => {
     qrCodeData = qr;
-    logger.info('QR gerado! Acesse https://<seu-app>.onrender.com/qr para escanear.');
-    // O QR será exibido na rota /qr ao invés de apenas nos logs
+    logger.info('QR gerado! Acesse /qr para escanear.');
 });
 
 client.on('ready', () => {
@@ -267,7 +270,7 @@ client.on('disconnected', (reason) => {
     logger.warn(`Cliente desconectado: ${reason}`);
     setTimeout(() => {
         logger.info('Tentando reconectar...');
-        client.initialize();
+        client.initialize().catch(err => logger.error('Erro na reconexão:', err.message, err.stack));
     }, 5000);
 });
 
@@ -1150,6 +1153,48 @@ function scheduleDailyReport() {
     });
 }
 
+// Função de resposta inteligente (placeholder, ajuste conforme necessário)
+async function intelligentResponseHandler(message, context) {
+    const randomResponse = simpleResponses[Math.floor(Math.random() * simpleResponses.length)];
+    await message.reply(randomResponse);
+}
+
+// Função de fallback para geração de texto
+async function generateTextWithFallback(prompt, userId) {
+    try {
+        const cachedResponse = await getFromCache(prompt);
+        if (cachedResponse) return cachedResponse;
+        return await withRetry(() => generateTextWithGrok(prompt));
+    } catch (error) {
+        logger.error(`Erro no fallback de texto para ${userId}: ${error.message}`, error.stack);
+        return "Olá! Não consegui gerar uma resposta no momento, mas estou aqui para ajudar!";
+    }
+}
+
+// Função de ajuda
+async function showHelp(message) {
+    const helpText = `
+Comandos disponíveis:
+!ajuda - Mostra esta mensagem
+!cancelar - Cancela a operação atual
+!gerartexto [modelo] [texto] - Gera texto com IA (ex.: !gerartexto grok Olá)
+!gerarimagem [descrição] - Gera uma imagem
+!buscarx [termo] - Busca no X
+!perfilx [usuário] - Analisa perfil do X
+!buscar [termo] - Busca no Google
+!clima [cidade] - Consulta o clima
+!traduzir [texto] - Traduz para inglês
+!resumo - Resumo diário do grupo
+!status - Status do bot
+!config [chave] [valor] - Altera configurações
+!vendas - Mostra intenções de venda
+!hora - Mostra a hora local
+!conhecimento [texto] - Ensina algo ao bot
+!leads - Mostra leads registrados
+    `;
+    await message.reply(helpText);
+}
+
 // Inicialização do servidor Express
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
@@ -1158,4 +1203,5 @@ app.listen(port, () => {
 
 client.initialize().catch((err) => {
     logger.error('Erro ao inicializar o cliente WhatsApp:', err.message, err.stack);
+    console.error('Detalhes completos do erro:', JSON.stringify(err, null, 2));
 });
