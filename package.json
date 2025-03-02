@@ -1,8 +1,8 @@
 {
   "name": "whatsapp-bot",
   "version": "1.0.0",
-  "description": "Um bot para WhatsApp sem usar Puppeteer.",
-  "main": "src/index.js",
+  "description": "Um bot para WhatsApp com integração MongoDB e Chromium no Render.",
+  "main": "index.js",
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
@@ -15,6 +15,7 @@
     "body-parser": "^1.20.3",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "mongoose": "^6.10.0",
     "node-schedule": "^2.1.1",
     "pdf-parse": "^1.1.1",
     "playwright": "^1.50.1",
@@ -24,6 +25,7 @@
     "qrcode-terminal": "^0.12.0",
     "sqlite3": "^5.1.7",
     "whatsapp-web.js": "^1.26.0",
+    "wwebjs-mongo": "^1.0.0",
     "winston": "^3.17.0",
     "ws": "^8.18.1"
   },

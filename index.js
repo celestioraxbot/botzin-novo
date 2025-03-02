@@ -1,5 +1,7 @@
 require('dotenv').config();
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { Client, RemoteAuth } = require('whatsapp-web.js');
+const { MongoStore } = require('wwebjs-mongo');
+const mongoose = require('mongoose');
 const express = require('express');
 const bodyParser = require('body-parser');
 const qrcode = require('qrcode');
@@ -227,66 +229,162 @@ const db = new sqlite3.Database('./groupMessages.db', sqlite3.OPEN_READWRITE | s
 const deepgram = process.env.DEEPGRAM_API_KEY ? createClient(process.env.DEEPGRAM_API_KEY) : null;
 const visionClient = process.env.GOOGLE_VISION_API_KEY ? new vision.ImageAnnotatorClient({ key: process.env.GOOGLE_VISION_API_KEY }) : null;
 
-// Configuração do cliente WhatsApp ajustada para o Render
-const client = new Client({
-    authStrategy: new LocalAuth({ dataPath: './whatsapp-auth' }), // Persistência local, mas cuidado com o Render
-    puppeteer: {
-        headless: true,
-        executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', // Ajuste conforme o ambiente
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--no-first-run',
-            '--no-zygote',
-            '--single-process', // Reduz uso de recursos
-            '--disable-gpu'
-        ],
-        timeout: 120000, // Aumentado para 2 minutos
-    },
-});
-
 // Variável para armazenar o QR Code
 let qrCodeData = '';
 
-client.on('qr', (qr) => {
-    qrCodeData = qr;
-    logger.info('QR gerado! Acesse /qr para escanear.');
-});
+// Conexão ao MongoDB e inicialização do cliente WhatsApp
+mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+    .then(() => {
+        logger.info('Conectado ao MongoDB para autenticação.');
+        const store = new MongoStore({ mongoose });
+        const client = new Client({
+            authStrategy: new RemoteAuth({
+                store,
+                backupSyncIntervalMs: 300000, // Backup a cada 5 minutos
+            }),
+            puppeteer: {
+                headless: true,
+                executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
+                args: [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-accelerated-2d-canvas',
+                    '--no-first-run',
+                    '--no-zygote',
+                    '--disable-gpu'
+                ],
+                timeout: 300000, // Aumentado para 5 minutos
+            },
+        });
 
-client.on('ready', () => {
-    logger.info('Bot conectado e pronto para uso.');
-    scheduleDailyReport();
-    scheduleLeadFollowUps();
-    scheduleApiHealthCheck();
-});
+        client.on('qr', (qr) => {
+            qrCodeData = qr;
+            logger.info('QR gerado! Acesse /qr para escanear.');
+        });
 
-client.on('auth_failure', (message) => {
-    logger.error('Falha na autenticação:', message);
-});
+        client.on('ready', () => {
+            logger.info('Bot conectado e pronto para uso.');
+            scheduleDailyReport();
+            scheduleLeadFollowUps();
+            scheduleApiHealthCheck();
+        });
 
-client.on('disconnected', (reason) => {
-    logger.warn(`Cliente desconectado: ${reason}`);
-    setTimeout(() => {
-        logger.info('Tentando reconectar...');
-        client.initialize().catch(err => logger.error('Erro na reconexão:', err.message, err.stack));
-    }, 5000);
-});
+        client.on('auth_failure', (message) => {
+            logger.error('Falha na autenticação:', message);
+        });
 
-// Rota para exibir o QR Code
-app.get('/qr', async (req, res) => {
-    if (!qrCodeData) {
-        return res.send('QR não gerado ainda. Aguarde ou reinicie o bot.');
-    }
-    try {
-        const qrImage = await qrcode.toDataURL(qrCodeData);
-        res.send(`<img src="${qrImage}" alt="Escaneie este QR Code com o WhatsApp" />`);
-    } catch (error) {
-        logger.error('Erro ao gerar imagem QR:', error.message);
-        res.send('Erro ao gerar o QR Code. Tente novamente.');
-    }
-});
+        client.on('disconnected', (reason) => {
+            logger.warn(`Cliente desconectado: ${reason}`);
+            setTimeout(() => {
+                logger.info('Tentando reconectar...');
+                client.initialize().catch(err => logger.error('Erro na reconexão:', err.message, err.stack));
+            }, 5000);
+        });
+
+        // Rota para exibir o QR Code
+        app.get('/qr', async (req, res) => {
+            if (!qrCodeData) {
+                return res.send('QR não gerado ainda. Aguarde ou reinicie o bot.');
+            }
+            try {
+                const qrImage = await qrcode.toDataURL(qrCodeData);
+                res.send(`<img src="${qrImage}" alt="Escaneie este QR Code com o WhatsApp" />`);
+            } catch (error) {
+                logger.error('Erro ao gerar imagem QR:', error.message);
+                res.status(500).send('Erro ao gerar o QR Code. Tente novamente.');
+            }
+        });
+
+        // Inicialização do cliente
+        client.initialize().catch((err) => {
+            logger.error('Erro ao inicializar o cliente WhatsApp:', err.message, err.stack);
+            console.error('Detalhes completos do erro:', JSON.stringify(err, null, 2));
+        });
+
+        // Manipulador de mensagens
+        client.on('message', async (message) => {
+            if (message.fromMe) {
+                logger.info('Mensagem ignorada: Enviada pelo próprio bot.');
+                return;
+            }
+
+            try {
+                logger.info(`Mensagem recebida: "${message.body}" de ${message.from} (Grupo: ${message.isGroupMsg})`);
+                const text = message.body.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+                const userId = message.from;
+                const now = Date.now();
+
+                if (rateLimitMap.has(userId) && (now - rateLimitMap.get(userId)) < config.rateLimitMs) {
+                    logger.info(`Limite de taxa atingido para ${userId}`);
+                    return;
+                }
+                rateLimitMap.set(userId, now);
+                metrics.logMessage();
+
+                const context = conversationContext.get(userId) || [];
+
+                if (message.isGroupMsg || message.from.includes('@g.us')) {
+                    if (text.startsWith('!')) {
+                        const commandParts = text.slice(1).split(' ');
+                        const command = commandParts[0];
+                        const commandContent = commandParts.slice(1).join(' ').trim();
+                        if (commandContent && command !== 'conhecimento' && command !== 'leads') {
+                            context.push({ role: 'user', content: commandContent });
+                            if (context.length > 10) context.shift();
+                            conversationContext.set(userId, context);
+                        }
+                        await logUsage(userId, command);
+                        await handleCommand(text, message);
+                    } else {
+                        logger.info(`Mensagem não é comando, ignorada em grupo: "${message.body}" de ${message.from}`);
+                    }
+                    return;
+                }
+
+                if (text.startsWith('!')) {
+                    const commandParts = text.slice(1).split(' ');
+                    const command = commandParts[0];
+                    const commandContent = commandParts.slice(1).join(' ').trim();
+                    if (commandContent && command !== 'conhecimento' && command !== 'leads') {
+                        context.push({ role: 'user', content: commandContent });
+                        if (context.length > 10) context.shift();
+                        conversationContext.set(userId, context);
+                    }
+                    await logUsage(userId, command);
+                    await handleCommand(text, message);
+                    return;
+                }
+
+                context.push({ role: 'user', content: text });
+                if (context.length > 10) context.shift();
+                conversationContext.set(userId, context);
+
+                if (text.includes('venda') || text.includes('compra') || text.includes('vendido') || text.includes('comprado')) {
+                    metrics.incrementSales();
+                    logger.info(`Intenção de venda detectada na mensagem: ${text}`);
+                    await saveLead(userId, text);
+                    const recoveryResponse = await generateTextWithFallback(
+                        `Olá! Você mencionou: "${text}". Responda em português, de forma breve e incentivando a compra!`,
+                        userId
+                    );
+                    await message.reply(adjustTone(recoveryResponse, detectTone(message.body)));
+                    return;
+                }
+
+                if (config.autoReply) {
+                    await intelligentResponseHandler(message, context);
+                }
+            } catch (error) {
+                logger.error(`Erro ao processar mensagem de ${message.from}: ${error.message}`, error.stack);
+                await message.reply('Desculpe-me, ocorreu um erro. Poderia tentar novamente? 🙂');
+            }
+        });
+    })
+    .catch((err) => {
+        logger.error('Erro ao conectar ao MongoDB:', err.message, err.stack);
+        process.exit(1); // Sai do processo se o MongoDB não conectar
+    });
 
 // Função de retry
 async function withRetry(fn, maxRetries = config.maxRetries) {
@@ -520,85 +618,6 @@ function scheduleApiHealthCheck() {
         }
     });
 }
-
-// Manipulador de mensagens
-client.on('message', async (message) => {
-    if (message.fromMe) {
-        logger.info('Mensagem ignorada: Enviada pelo próprio bot.');
-        return;
-    }
-
-    try {
-        logger.info(`Mensagem recebida: "${message.body}" de ${message.from} (Grupo: ${message.isGroupMsg})`);
-        const text = message.body.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-        const userId = message.from;
-        const now = Date.now();
-
-        if (rateLimitMap.has(userId) && (now - rateLimitMap.get(userId)) < config.rateLimitMs) {
-            logger.info(`Limite de taxa atingido para ${userId}`);
-            return;
-        }
-        rateLimitMap.set(userId, now);
-        metrics.logMessage();
-
-        const context = conversationContext.get(userId) || [];
-
-        if (message.isGroupMsg || message.from.includes('@g.us')) {
-            if (text.startsWith('!')) {
-                const commandParts = text.slice(1).split(' ');
-                const command = commandParts[0];
-                const commandContent = commandParts.slice(1).join(' ').trim();
-                if (commandContent && command !== 'conhecimento' && command !== 'leads') {
-                    context.push({ role: 'user', content: commandContent });
-                    if (context.length > 10) context.shift();
-                    conversationContext.set(userId, context);
-                }
-                await logUsage(userId, command);
-                await handleCommand(text, message);
-            } else {
-                logger.info(`Mensagem não é comando, ignorada em grupo: "${message.body}" de ${message.from}`);
-            }
-            return;
-        }
-
-        if (text.startsWith('!')) {
-            const commandParts = text.slice(1).split(' ');
-            const command = commandParts[0];
-            const commandContent = commandParts.slice(1).join(' ').trim();
-            if (commandContent && command !== 'conhecimento' && command !== 'leads') {
-                context.push({ role: 'user', content: commandContent });
-                if (context.length > 10) context.shift();
-                conversationContext.set(userId, context);
-            }
-            await logUsage(userId, command);
-            await handleCommand(text, message);
-            return;
-        }
-
-        context.push({ role: 'user', content: text });
-        if (context.length > 10) context.shift();
-        conversationContext.set(userId, context);
-
-        if (text.includes('venda') || text.includes('compra') || text.includes('vendido') || text.includes('comprado')) {
-            metrics.incrementSales();
-            logger.info(`Intenção de venda detectada na mensagem: ${text}`);
-            await saveLead(userId, text);
-            const recoveryResponse = await generateTextWithFallback(
-                `Olá! Você mencionou: "${text}". Responda em português, de forma breve e incentivando a compra!`,
-                userId
-            );
-            await message.reply(adjustTone(recoveryResponse, detectTone(message.body)));
-            return;
-        }
-
-        if (config.autoReply) {
-            await intelligentResponseHandler(message, context);
-        }
-    } catch (error) {
-        logger.error(`Erro ao processar mensagem de ${message.from}: ${error.message}`, error.stack);
-        await message.reply('Desculpe-me, ocorreu um erro. Poderia tentar novamente? 🙂');
-    }
-});
 
 // Manipulador de comandos
 async function handleCommand(text, message) {
@@ -1199,9 +1218,4 @@ Comandos disponíveis:
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
     logger.info(`Servidor Express rodando na porta ${port}`);
-});
-
-client.initialize().catch((err) => {
-    logger.error('Erro ao inicializar o cliente WhatsApp:', err.message, err.stack);
-    console.error('Detalhes completos do erro:', JSON.stringify(err, null, 2));
 });
