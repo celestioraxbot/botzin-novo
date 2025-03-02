@@ -1,16 +1,13 @@
-# fly.toml app configuration file generated for botzin on 2025-03-02T01:12:01-03:00
-#
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
-
-app = 'botzin'
+app = 'botwhatsappgit'
 primary_region = 'iad'
 
 [build]
+  dockerfile = "Dockerfile"
 
 [env]
   PORT = "3000"
-  NODE_ENV = "development"
+  NODE_ENV = "production"
+  CHROMIUM_PATH = "/usr/bin/chromium"
 
 [http_service]
   internal_port = 3000

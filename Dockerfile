@@ -1,11 +1,16 @@
-FROM node:18
+FROM node:18-slim
 
-# Instala dependências necessárias para o Chromium
+# Instala dependências necessárias para o Chromium e Puppeteer
 RUN apt-get update && apt-get install -y \
     chromium \
     fonts-liberation \
     libappindicator3-1 \
+    libasound2 \
     libatk-bridge2.0-0 \
+    libatk1.0-0 \
+    libcups2 \
+    libdbus-1-3 \
+    libgdk-pixbuf2.0-0 \
     libgtk-3-0 \
     libnspr4 \
     libnss3 \
@@ -16,12 +21,23 @@ RUN apt-get update && apt-get install -y \
     xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Define o caminho do Chromium como variável de ambiente
+# Define variáveis de ambiente
 ENV CHROMIUM_PATH=/usr/bin/chromium
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV NODE_ENV=production
 
+# Configura o diretório de trabalho
 WORKDIR /app
+
+# Instala dependências do projeto
 COPY package*.json ./
-RUN npm install
+RUN npm install --production
+
+# Copia o restante dos arquivos
 COPY . .
 
+# Expõe a porta
+EXPOSE 3000
+
+# Comando para iniciar o app
 CMD ["node", "index.js"]
