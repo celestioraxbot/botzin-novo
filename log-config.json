@@ -1,0 +1,30 @@
+{
+  "levels": {
+    "error": 0,
+    "warn": 1,
+    "info": 2,
+    "http": 3,
+    "debug": 4
+  },
+  "colors": {
+    "error": "red",
+    "warn": "yellow",
+    "info": "green",
+    "http": "magenta",
+    "debug": "blue"
+  },
+  "transports": [
+    {
+      "type": "console",
+      "format": "combine(colorize(), simple())"
+    },
+    {
+      "type": "file",
+      "filename": "./src/logs/error.log",
+      "level": "error",
+      "format": "combine(timestamp(), json())"
+    },
+    {
+      "type": "file",
+      "filename": "./src/logs/combined.log",
+      "format": "combine(timestamp

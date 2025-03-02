@@ -1,0 +1,12 @@
+.wwebjs_auth
+.wwebjs_cache
+commands - exampleCommand.js, groupReportCommand.json, index.json, sentimentCommand.json, translateCommand.json
+data - session.json
+logs
+node_module
+utils - logger.json, metrics.json, sentiment.json, textGen.json
+.env
+index.js
+log-config.json
+package.json
+package-lock.json

@@ -1,0 +1,6 @@
+{
+  "autoReply": true,
+  "reportTime": "0 0 * * *",
+  "maxRetries": 3,
+  "rateLimitMs": 1000
+}
