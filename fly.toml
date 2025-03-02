@@ -1,16 +1,12 @@
-# fly.toml app configuration file generated for botzin on 2025-03-02T01:12:01-03:00
+# fly.toml app configuration file generated for botwhatsappgit on 2025-03-02T16:45:17Z
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
-app = 'botzin'
-primary_region = 'iad'
+app = 'botwhatsappgit'
+primary_region = 'gru'
 
 [build]
-
-[env]
-  PORT = "3000"
-  NODE_ENV = "development"
 
 [http_service]
   internal_port = 3000
@@ -24,3 +20,4 @@ primary_region = 'iad'
   memory = '1gb'
   cpu_kind = 'shared'
   cpus = 1
+  memory_mb = 1024
